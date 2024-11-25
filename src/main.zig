@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const TokenType = enum { leftParam, rightParam, Symbol, Number };
+const TokenType = enum { leftParen, rightParen, Symbol, Number };
 
 const Token = struct { type: TokenType, value: []const u8 };
 
@@ -47,15 +47,15 @@ pub fn tokenize(input: []const u8, tokens: *std.ArrayList(Token), alloc: std.mem
     while (i < input.len) {
         const char = input[i];
         switch (char) {
-            //covers left bracket
-            '(' => try tokens.append(Token{ .type = TokenType.leftParam, .value = "(" }),
-            //covers right bracket
-            ')' => try tokens.append(Token{ .type = TokenType.leftParam, .value = ")" }),
+            //covers left paranthesis
+            '(' => try tokens.append(Token{ .type = TokenType.leftParen, .value = "(" }),
+            //covers right paranthesis
+            ')' => try tokens.append(Token{ .type = TokenType.rightParen, .value = ")" }),
             //covers all symbols and numbers prefixed with '+' and '-'
-            '*', '/' => {
+            '*', '/', '+' => {
                 try tokens.append(Token{ .type = TokenType.Symbol, .value = input[i .. i + 1] });
             },
-            '+', '-' => {
+            '-' => {
                 var temp_string = std.ArrayList(u8).init(alloc);
                 defer temp_string.deinit();
                 try temp_string.append(char);
@@ -74,20 +74,6 @@ pub fn tokenize(input: []const u8, tokens: *std.ArrayList(Token), alloc: std.mem
                     try tokens.append(Token{ .type = TokenType.Symbol, .value = final_string });
                 }
             },
-            //covers "define"
-            'd' => {
-                var temp_string = std.ArrayList(u8).init(alloc);
-                defer temp_string.deinit();
-                try temp_string.append(char);
-                i += 1;
-                while (i + 1 < input.len and input[i] != 'e') {
-                    try temp_string.append(input[i]);
-                    i += 1;
-                }
-                try temp_string.append(input[i]);
-                const final_string = try temp_string.toOwnedSlice();
-                try tokens.append(Token{ .type = TokenType.Symbol, .value = final_string });
-            },
             //All numbers covered
             '0'...'9' => {
                 var temp_string = std.ArrayList(u8).init(alloc);
@@ -100,15 +86,38 @@ pub fn tokenize(input: []const u8, tokens: *std.ArrayList(Token), alloc: std.mem
                 const final_string = try temp_string.toOwnedSlice();
                 try tokens.append(Token{ .type = TokenType.Number, .value = final_string });
             },
-            else => {},
+            //handling whitespaces, tabs, newlines
+            '\t', '\n', ' ' => {
+                continue;
+            },
+            else => {
+                var temp_string = std.ArrayList(u8).init(alloc);
+                defer temp_string.deinit();
+                try temp_string.append(char);
+                while (i + 1 < input.len and is_char_symbol_token(input[i + 1]) == true) {
+                    temp_string.append(input[i + 1]);
+                    i += 1;
+                }
+                const final_string = try temp_string.toOwnedSlice();
+                try tokens.append(Token{ .type = TokenType.Symbol, .value = final_string });
+            },
         }
         i += 1;
     }
 }
 
-pub fn isNumber(c: u8) bool {
+fn isNumber(c: u8) bool {
     if (c >= '0' and c <= '9') {
         return true;
     }
     return false;
+}
+
+fn is_char_symbol_token(s: u8) bool {
+    switch (s) {
+        '0'...'9', '(', ')', '+', '-', '*', '/', '\n', '\t', ' ' => {
+            return false;
+        },
+    }
+    return true;
 }
