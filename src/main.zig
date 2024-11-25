@@ -88,14 +88,14 @@ pub fn tokenize(input: []const u8, tokens: *std.ArrayList(Token), alloc: std.mem
             },
             //handling whitespaces, tabs, newlines
             '\t', '\n', ' ' => {
-                continue;
+                //skip
             },
             else => {
                 var temp_string = std.ArrayList(u8).init(alloc);
                 defer temp_string.deinit();
                 try temp_string.append(char);
                 while (i + 1 < input.len and is_char_symbol_token(input[i + 1]) == true) {
-                    temp_string.append(input[i + 1]);
+                    try temp_string.append(input[i + 1]);
                     i += 1;
                 }
                 const final_string = try temp_string.toOwnedSlice();
@@ -118,6 +118,7 @@ fn is_char_symbol_token(s: u8) bool {
         '0'...'9', '(', ')', '+', '-', '*', '/', '\n', '\t', ' ' => {
             return false;
         },
+        else => {},
     }
     return true;
 }
