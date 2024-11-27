@@ -1,30 +1,36 @@
-Here's a more visually appealing and less "lame" version of your Markdown for GitHub:
-
-```markdown
 # Zisp - A Toy Lisp Interpreter in Zig
 
----
+**Zisp** is a minimalistic Lisp interpreter crafted with **Zig**. 
 
-## Overview
+This project was started because after reaching 58/109 exercises in ziglings, I got overwhelmed with the theory part,
 
-**Zisp** is a minimalistic Lisp interpreter crafted with **Zig**. This project doubles as an educational journey into both the Zig language and the art of interpreter design.
+https://github.com/user-attachments/assets/715597eb-6191-4e9e-8cfd-d34a74204bd3
 
-## 🛠️ Project Pipeline
+But after beginning to lose interest I remembered that i was the top guy and cannot give up like this,
+
+https://github.com/user-attachments/assets/2991d63b-8ce2-4a5b-adf8-4bf271792484
+
+I have very low attention span and im as goog as a illiterate, educational videos too bore me.
+
+So I decided to rawdog Claude with a series of "f around and find out" and started to build this, I think I'm getting results so I'll keep cooking
+
+![cooking](https://github.com/user-attachments/assets/8597b557-3f2a-4918-b1c9-d550fed1e35a)
+
+
+## Project Pipeline
 
 ```plaintext
 Tokenizer -> Abstract Syntax Tree -> Parser -> Evaluator -> REPL Environment
-   ✔️              🔄                   🔄         🔄              🔄
+   ✔️              ❌                   ❌         ❌              ❌
 ```
-
-🔄 - In Progress, ✔️ - Completed
-
 ---
-
-## 📋 Implementation Status
-
-### 🚀 Tokenizer
+## 🚀 Tokenizer
 
 - **Features:**
+  
+![zesty-sonic-zesty](https://github.com/user-attachments/assets/36448efb-f70e-4f56-a648-2d7dbf520a4e)
+
+  
   - **REPL Interface:** Interactive Lisp environment.
   - **Token Classification:** Recognizes parentheses, symbols, and numbers.
   - **Multi-line Input:** Handles inputs spanning multiple lines.
@@ -33,31 +39,32 @@ Tokenizer -> Abstract Syntax Tree -> Parser -> Evaluator -> REPL Environment
 
 ### 🚧 Pending Features
 
+<img width="756" alt="image" src="https://github.com/user-attachments/assets/44923880-99ca-4dcd-a655-1f6f853d14bc">
+
+
 | Feature                | Description                         | Status  |
 |------------------------|-------------------------------------|---------|
-| **Strings**            | Support for string literals         | 🔄      |
-| **Comments**           | Semicolon-style comments            | 🔄      |
-| **Float Numbers**      | Decimal point numbers               | 🔄      |
-| **Scientific Notation**| Exponential format (e.g., `1e10`)   | 🔄      |
-| **Error Reporting**    | Line/column tracking for errors     | 🔄      |
-| **Symbol Validation**  | Enforcing symbol naming conventions | 🔄      |
-| **Reserved Keywords**  | Handling Lisp-specific keywords     | 🔄      |
-| **Character Literals** | Single character support            | 🔄      |
-| **Escape Sequences**   | Support for special characters      | 🔄      |
-| **Alternative Bases**  | Binary, octal, hexadecimal numbers  | 🔄      |
-| **Buffer Management**  | Dynamic buffer sizing for input     | 🔄      |
-| **Error Recovery**     | Graceful handling of malformed input| 🔄      |
+| **Strings**            | Support for string literals         | ❌      |
+| **Comments**           | Semicolon-style comments            | ❌      |
+| **Float Numbers**      | Decimal point numbers               | ❌      |
+| **Scientific Notation**| Exponential format (e.g., `1e10`)   | ❌      |
+| **Error Reporting**    | Line/column tracking for errors     | ❌      |
+| **Symbol Validation**  | Enforcing symbol naming conventions | ❌      |
+| **Reserved Keywords**  | Handling Lisp-specific keywords     | ❌      |
+| **Character Literals** | Single character support            | ❌      |
+| **Escape Sequences**   | Support for special characters      | ❌      |
+| **Alternative Bases**  | Binary, octal, hexadecimal numbers  | ❌      |
+| **Buffer Management**  | Dynamic buffer sizing for input     | ❌      |
+| **Error Recovery**     | Graceful handling of malformed input| ❌      |
 
 ---
 
 ## 🏗️ Build and Run
+
+<img width="472" alt="image" src="https://github.com/user-attachments/assets/09d9316f-c654-4ee3-bf2f-68f343b2763a">
 
 To run Zisp, simply use:
 
 ```bash
 zig build run
 ```
-
-```
-
-This version uses emojis for a more engaging look, incorporates symbols for status indicators, and improves the structure for better readability on GitHub. Remember, however, that GitHub might render emojis differently depending on the user's environment, so it's good to keep this in mind when choosing to use them.
