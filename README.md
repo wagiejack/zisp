@@ -10,9 +10,13 @@ But after beginning to lose interest I remembered that i was the top guy and can
 
 https://github.com/user-attachments/assets/2991d63b-8ce2-4a5b-adf8-4bf271792484
 
-I have very low attention span and im as goog as a illiterate, educational videos too bore me.
+I have very low attention span and not having read ~10 pages of something in one sitting in past 8 years, im as good as a illiterate, 
 
-So I decided to rawdog Claude with a series of "f around and find out" and started to build this, I think I'm getting results so I'll keep cooking
+educational videos too bore me.
+
+So I decided to rawdog Claude with a series of "fuck around and find out" and started to build this, 
+
+Since I'm getting results so I'll keep cooking
 
 ![cooking](https://github.com/user-attachments/assets/8597b557-3f2a-4918-b1c9-d550fed1e35a)
 
