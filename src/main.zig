@@ -8,12 +8,15 @@ const TokenType = enum { leftParen, rightParen, Symbol, Number };
 const Token = struct { type: TokenType, value: []const u8 };
 
 //Parser pre-requisites
-const NodeType = enum { number, symbol, ListNode };
-//Why did i go with a struct instead of a tagged union, according to claude,
-//  -more helpful in processing nodes in evaluator
-//  -can add more info such as source location,info and debug info in future
-const Node = struct { type: NodeType, value: union { number: i64, symbol: []const u8, list: std.ArrayList(Node) } };
-//Again, might add more features to this Parent_AST that is why encapsulating it inside a struct
+const specialFormType = enum {
+    Define, // Variables/functions
+    Lambda, // Function creation
+    If, // Basic conditionals
+    Quote, // Raw data
+    Begin, // Multiple expressions
+};
+const NodeType = enum { number, symbol, ListNode, specialFormType };
+const Node = struct { type: NodeType, value: union { number: i64, symbol: []const u8, list: std.ArrayList(Node), specialForm: specialFormType } };
 const Parent_AST = struct { expressions: std.ArrayList(Node) };
 
 pub fn main() !void {
@@ -64,7 +67,7 @@ pub fn main() !void {
                 // <---------------------------------------------------------------------------------------------------------->
 
                 // <---------------------Uncomment this to print and see AST structure that is generated---------------------->
-                // print_AST(&AST.expressions);
+                print_AST(&AST.expressions);
                 // <---------------------------------------------------------------------------------------------------------->
 
                 //clearing the tokens
@@ -103,17 +106,20 @@ fn print_tokens(tokens: *std.ArrayList(Token)) void {
 }
 
 fn print_AST(ast: *const std.ArrayList(Node)) void {
+    // Clear any previous outputs
     for (ast.items) |node| {
         print_node(node, 0);
     }
 }
 
 fn print_node(node: Node, indent: usize) void {
+    // Print indentation for visual hierarchy
     var i: usize = 0;
     while (i < indent) : (i += 1) {
         std.debug.print(" ", .{});
     }
 
+    // Handle each possible node type
     switch (node.type) {
         .number => std.debug.print("Number: {}\n", .{node.value.number}),
         .symbol => std.debug.print("Symbol: {s}\n", .{node.value.symbol}),
@@ -123,6 +129,13 @@ fn print_node(node: Node, indent: usize) void {
                 print_node(child, indent + 2);
             }
         },
+        .specialFormType => std.debug.print("Special Form: {s}\n", .{switch (node.value.specialForm) {
+            .Define => "define",
+            .Lambda => "lambda",
+            .If => "if",
+            .Quote => "quote",
+            .Begin => "begin",
+        }}),
     }
 }
 // <------------------------------------------------------------------------------------------------------------------->
@@ -137,23 +150,40 @@ fn tokenize(input: []const u8, tokens: *std.ArrayList(Token), alloc: std.mem.All
             '(' => try tokens.append(Token{ .type = TokenType.leftParen, .value = "(" }),
             //covers right paranthesis
             ')' => try tokens.append(Token{ .type = TokenType.rightParen, .value = ")" }),
-            //covers all symbols and numbers prefixed with '+' and '-'
-            '*', '/', '+', '-' => {
+            '>', '<' => {
                 var temp_string = std.ArrayList(u8).init(alloc);
                 defer temp_string.deinit();
                 try temp_string.append(char);
-                if (i + 1 < input.len and is_char_symbol_token(input[i + 1])) {
-                    while (i + 1 < input.len and is_char_symbol_token(input[i + 1])) {
+                while (i + 1 < input.len and isNumber(input[i + 1]) == false and is_character(input[i + 1]) == false and is_char_not_whitespace(input[i + 1]) == true) {
+                    if (input[i + 1] == '=') {
                         try temp_string.append(input[i + 1]);
                         i += 1;
+                    } else {
+                        break;
                     }
+                }
+                const final_string = try temp_string.toOwnedSlice();
+                try tokens.append(Token{ .type = TokenType.Symbol, .value = final_string });
+            },
+            //covers all symbols and numbers prefixed with '+' and '-'
+            '*', '/', '+', '-', '=' => {
+                var temp_string = std.ArrayList(u8).init(alloc);
+                defer temp_string.deinit();
+                try temp_string.append(char);
+                while (i + 1 < input.len and is_char_not_whitespace_or_symbol_token(input[i + 1])) {
+                    try temp_string.append(input[i + 1]);
+                    i += 1;
                 }
                 var final_string = try temp_string.toOwnedSlice();
                 if ((final_string[0] == '+' or final_string[0] == '-') and is_following_a_number(final_string[1..])) {
                     final_string = if (final_string[0] == '+') final_string[1..] else final_string;
                     try tokens.append(Token{ .type = TokenType.Number, .value = final_string });
                 } else {
-                    try tokens.append(Token{ .type = TokenType.Symbol, .value = final_string });
+                    const str = try alloc.dupe(u8, &[_]u8{final_string[0]});
+                    try tokens.append(Token{ .type = TokenType.Symbol, .value = str });
+                    if (final_string.len > 1) {
+                        try tokens.append(Token{ .type = TokenType.Symbol, .value = final_string[1..] });
+                    }
                 }
             },
             //All numbers covered
@@ -161,22 +191,37 @@ fn tokenize(input: []const u8, tokens: *std.ArrayList(Token), alloc: std.mem.All
                 var temp_string = std.ArrayList(u8).init(alloc);
                 defer temp_string.deinit();
                 try temp_string.append(char);
-                while (i + 1 < input.len and is_char_symbol_token(input[i + 1])) {
-                    try temp_string.append(input[i + 1]);
+                while (i + 1 < input.len and is_char_not_whitespace(input[i + 1])) {
+                    switch (input[i + 1]) {
+                        '+', '-', '*', '/', '<', '>', '=' => {
+                            if (temp_string.items.len > 0) {
+                                const final_string = try temp_string.toOwnedSlice();
+                                try tokens.append(Token{ .type = TokenType.Symbol, .value = final_string });
+                            }
+                            const str = try alloc.dupe(u8, &[_]u8{input[i + 1]});
+                            try tokens.append(Token{ .type = TokenType.Symbol, .value = str });
+                            temp_string.clearRetainingCapacity();
+                        },
+                        else => {
+                            try temp_string.append(input[i + 1]);
+                        },
+                    }
                     i += 1;
                 }
-                const final_string = try temp_string.toOwnedSlice();
-                var is_token_number = true;
-                for (final_string) |c| {
-                    if (isNumber(c) == false) {
-                        is_token_number = false;
-                        break;
+                if (temp_string.items.len > 0) {
+                    const final_string = try temp_string.toOwnedSlice();
+                    var is_token_number = true;
+                    for (final_string) |c| {
+                        if (isNumber(c) == false) {
+                            is_token_number = false;
+                            break;
+                        }
                     }
-                }
-                if (is_token_number == true) {
-                    try tokens.append(Token{ .type = TokenType.Number, .value = final_string });
-                } else {
-                    try tokens.append(Token{ .type = TokenType.Symbol, .value = final_string });
+                    if (is_token_number == true) {
+                        try tokens.append(Token{ .type = TokenType.Number, .value = final_string });
+                    } else {
+                        try tokens.append(Token{ .type = TokenType.Symbol, .value = final_string });
+                    }
                 }
             },
             //handling whitespaces, tabs, newlines
@@ -187,19 +232,44 @@ fn tokenize(input: []const u8, tokens: *std.ArrayList(Token), alloc: std.mem.All
                 var temp_string = std.ArrayList(u8).init(alloc);
                 defer temp_string.deinit();
                 try temp_string.append(char);
-                while (i + 1 < input.len and is_char_symbol_token(input[i + 1]) == true) {
-                    try temp_string.append(input[i + 1]);
+                while (i + 1 < input.len and is_char_not_whitespace(input[i + 1])) {
+                    switch (input[i + 1]) {
+                        '+', '-', '*', '/', '<', '>', '=' => {
+                            if (temp_string.items.len > 0) {
+                                const final_string = try temp_string.toOwnedSlice();
+                                try tokens.append(Token{ .type = TokenType.Symbol, .value = final_string });
+                            }
+                            const str = try alloc.dupe(u8, &[_]u8{input[i + 1]});
+                            try tokens.append(Token{ .type = TokenType.Symbol, .value = str });
+                            temp_string.clearRetainingCapacity();
+                        },
+                        else => {
+                            try temp_string.append(input[i + 1]);
+                        },
+                    }
                     i += 1;
                 }
-                const final_string = try temp_string.toOwnedSlice();
-                try tokens.append(Token{ .type = TokenType.Symbol, .value = final_string });
+                if (temp_string.items.len > 0) {
+                    const final_string = try temp_string.toOwnedSlice();
+                    try tokens.append(Token{ .type = TokenType.Symbol, .value = final_string });
+                }
             },
         }
         i += 1;
     }
 }
 //<-------------------------------------------TOKENIZER HELPER FUNCTIONS------------------------------------------------>
-fn is_char_symbol_token(s: u8) bool {
+fn is_char_not_whitespace_or_symbol_token(s: u8) bool {
+    switch (s) {
+        '(', ')', '\n', '\t', ' ', '+', '-', '<', '>', '=', '*', '/' => {
+            return false;
+        },
+        else => {},
+    }
+    return true;
+}
+
+fn is_char_not_whitespace(s: u8) bool {
     switch (s) {
         '(', ')', '\n', '\t', ' ' => {
             return false;
@@ -207,6 +277,10 @@ fn is_char_symbol_token(s: u8) bool {
         else => {},
     }
     return true;
+}
+
+fn is_character(s: u8) bool {
+    return (s >= 'a' and s <= 'z') or (s >= 'A' and s <= 'Z');
 }
 
 fn is_following_a_number(s: []u8) bool {
@@ -240,7 +314,6 @@ const Node_stack = struct {
         return self.nodes.pop();
     }
     pub fn push(self: *Node_stack, n: *Node) !void {
-        // std.debug.print("Pushing a node of type {any} with value {any}\n", .{ n.type, n.*.value });
         try self.nodes.append(n.*);
     }
     pub fn deinit(self: *Node_stack) void {
@@ -248,24 +321,16 @@ const Node_stack = struct {
     }
 };
 fn create_and_allocate_to_AST(tokens: *const std.ArrayList(Token), AST: *std.ArrayList(Node), arena_alloc: *const std.mem.Allocator) !void {
-    //we keep iterating each token, we need to keep track of the parent node,
     var node_stack = Node_stack.init(arena_alloc.*);
 
     defer node_stack.deinit();
     for (tokens.items) |token| {
         const parent_node = node_stack.peek();
-        // std.debug.print("The type of the peeked parent_node is {any}\n", .{if (parent_node) |n| n.*.type else null});
         const res = try categorize_and_allocate(&token, parent_node, arena_alloc.*);
-        //res might be void or it might return a Node, in the case that there is a node, we have to move it to the stack
         if (res) |child_node| {
-            // std.debug.print("The returned node is of the type {any}\n", .{child_node.*.type});
             try node_stack.push(child_node);
         }
-        // std.debug.print("Before we move ahead to ) checking, the tokenType is {any}\n", .{token.type});
-        //if the token is ) then we have to conclude and move one stack up and restore the parent node
         if (token.type == TokenType.rightParen and node_stack.len() > 1) {
-            //If the size >1 then we are sure that it is a child and a parent exists
-            // std.debug.print("This is a proof that we entered the ) condition with the type {any}", .{token.type});
             const popped_node = node_stack.pop().?;
             if (node_stack.peek()) |node| {
                 try node.*.value.list.append(popped_node);
@@ -282,10 +347,6 @@ fn create_and_allocate_to_AST(tokens: *const std.ArrayList(Token), AST: *std.Arr
 
 //AST HELPER FUNCTIONS
 fn categorize_and_allocate(token: *const Token, parent_node: ?*Node, arena_alloc: std.mem.Allocator) !?*Node {
-    // std.debug.print("Got the node {s}", .{token.value});
-    // const s = if (parent_node) |n| n.*.type else null;
-    // std.debug.print("The incoming parent_node is of the type {any}\n", .{s});
-    //if left paranthesis, these new Node of type Node[] is created and we assign left to it and return
     switch (token.type) {
         TokenType.leftParen => {
             const new_node = try arena_alloc.create(Node);
@@ -295,16 +356,27 @@ fn categorize_and_allocate(token: *const Token, parent_node: ?*Node, arena_alloc
             return new_node;
         },
         TokenType.Symbol, TokenType.rightParen => {
-            const temp = Node{ .type = NodeType.symbol, .value = .{ .symbol = token.value } };
+            var temp: Node = undefined;
+            if (std.mem.eql(u8, token.value, "define")) {
+                temp = Node{ .type = NodeType.specialFormType, .value = .{ .specialForm = specialFormType.Define } };
+            } else if (std.mem.eql(u8, token.value, "lambda")) {
+                temp = Node{ .type = NodeType.specialFormType, .value = .{ .specialForm = specialFormType.Lambda } };
+            } else if (std.mem.eql(u8, token.value, "if")) {
+                temp = Node{ .type = NodeType.specialFormType, .value = .{ .specialForm = specialFormType.If } };
+            } else if (std.mem.eql(u8, token.value, "quote")) {
+                temp = Node{ .type = NodeType.specialFormType, .value = .{ .specialForm = specialFormType.Quote } };
+            } else if (std.mem.eql(u8, token.value, "begin")) {
+                temp = Node{ .type = NodeType.specialFormType, .value = .{ .specialForm = specialFormType.Begin } };
+            } else {
+                temp = Node{ .type = NodeType.symbol, .value = .{ .symbol = token.value } };
+            }
             if (parent_node) |node| {
                 try node.*.value.list.append(temp);
             } else {
                 return ASTErrors.NoParentNode;
             }
-            // try (parent_node.* orelse return ASTErrors.NoParentNode).value.list.append(temp);
         },
         TokenType.Number => {
-            // std.debug.print("The value being transformed is {any} and the type of parent_node is {any}\n", .{ token.value, parent_node.?.type });
             const val = try std.fmt.parseInt(i64, token.value, 10);
             const temp = Node{ .type = NodeType.number, .value = .{ .number = val } };
             if (parent_node) |node| {
