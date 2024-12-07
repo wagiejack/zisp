@@ -2,6 +2,7 @@ const std = @import("std");
 
 //Defining the errors
 const ASTErrors = error{ NoParentNode, NoNodeInStack, NoPoppedNode, NoParentTokenFormed };
+const EvalError = error{ TypeMismatch, DivisionByZero, InvalidArguments, NoValueExistsForKeyInEnvironment, InvalidSymbolAtBeginningOfExpression, TestingError, ThisNeedsToBeInsideParenthesis };
 
 //Tokenizer pre-requisites
 const TokenType = enum { leftParen, rightParen, Symbol, Number };
@@ -18,6 +19,8 @@ const specialFormType = enum {
 const NodeType = enum { number, symbol, ListNode, specialFormType };
 const Node = struct { type: NodeType, value: union { number: i64, symbol: []const u8, list: std.ArrayList(Node), specialForm: specialFormType } };
 const Parent_AST = struct { expressions: std.ArrayList(Node) };
+
+//Evaluator pre-requisites
 
 pub fn main() !void {
     const stdin = std.io.getStdIn();
@@ -66,8 +69,14 @@ pub fn main() !void {
                 // print_tokens(&tokens);
                 // <---------------------------------------------------------------------------------------------------------->
 
+                //Main Evaluation
+                for (AST.expressions.items) |ast| {
+                    const result = try eval(&ast, null, &gpa_allocator);
+                    std.debug.print("Result : {any}\n", .{result.number});
+                }
+
                 // <---------------------Uncomment this to print and see AST structure that is generated---------------------->
-                print_AST(&AST.expressions);
+                // print_AST(&AST.expressions);
                 // <---------------------------------------------------------------------------------------------------------->
 
                 //clearing the tokens
@@ -387,4 +396,199 @@ fn categorize_and_allocate(token: *const Token, parent_node: ?*Node, arena_alloc
         },
     }
     return null;
+}
+
+// Evaluator
+
+//Bring this to evaluator pre-requisites later
+const Value = union(enum) {
+    number: i64,
+    function: *const fn ([]const Value) EvalError!Value,
+};
+const Environment = struct {
+    values: std.StringHashMap(Value),
+    parent: ?*Environment,
+
+    pub fn init(alloc: *const std.mem.Allocator, parent: ?*Environment) !Environment {
+        var env = Environment{
+            .values = std.StringHashMap(Value).init(alloc.*),
+            .parent = parent,
+        };
+
+        if (parent) |p| {
+            var iter = p.values.iterator();
+            while (iter.next()) |entry| {
+                try env.values.put(entry.key_ptr.*, entry.value_ptr.*);
+            }
+        }
+        return env;
+    }
+};
+
+fn eval(node: *const Node, parent_env: ?*Environment, alloc: *const std.mem.Allocator) anyerror!Value {
+    switch (node.type) {
+        NodeType.ListNode => {
+            const len = node.value.list.items.len;
+            const expression = node.value.list.items[1 .. len - 1];
+
+            const operator = expression[0];
+            const args = expression[1..];
+            var new_env = try Environment.init(alloc, parent_env);
+            switch (operator.type) {
+                NodeType.ListNode, NodeType.number => {
+                    return EvalError.InvalidSymbolAtBeginningOfExpression;
+                },
+                NodeType.specialFormType => {},
+                NodeType.symbol => {
+                    const op = operator.value.symbol;
+                    switch (op[0]) {
+                        '+' => {
+                            return Value{ .number = try add(&args, &new_env, alloc) };
+                        },
+                        '-' => {
+                            return Value{ .number = try sub(&args, &new_env, alloc) };
+                        },
+                        '*' => {
+                            return Value{ .number = try multiply(&args, &new_env, alloc) };
+                        },
+                        '/' => {
+                            return Value{ .number = try divide(&args, &new_env, alloc) };
+                        },
+                        else => {
+                            return EvalError.InvalidSymbolAtBeginningOfExpression;
+                        },
+                    }
+                },
+            }
+        },
+        NodeType.number => {
+            return Value{ .number = node.value.number };
+        },
+        // NodeType.symbol => {
+        //     return Value{};
+        // },
+        // NodeType.specialFormType => {
+        //     return Value{};
+        // },
+        else => {
+            return EvalError.TestingError;
+        },
+    }
+    return EvalError.DivisionByZero;
+}
+
+//const NodeType = enum { number, symbol, ListNode, specialFormType };
+// const Node = struct { type: NodeType, value: union { number: i64, symbol: []const u8, list: std.ArrayList(Node), specialForm: specialFormType } };
+fn add(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem.Allocator) !i64 {
+    var result: i64 = 0;
+    for (args.*) |n| {
+        switch (n.type) {
+            NodeType.number => {
+                result += n.value.number;
+            },
+            NodeType.ListNode => {
+                const temp_res = try eval(&n, current_env, alloc);
+                result += temp_res.number;
+            },
+            NodeType.symbol => {
+                //Look at it in the map and parent maps
+            },
+            NodeType.specialFormType => {
+                return EvalError.ThisNeedsToBeInsideParenthesis;
+            },
+        }
+    }
+    return result;
+}
+
+fn sub(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem.Allocator) !i64 {
+    var result: i64 = 0;
+    for (args.*) |n| {
+        switch (n.type) {
+            NodeType.number => {
+                result -= n.value.number;
+            },
+            NodeType.ListNode => {
+                const temp_res = try eval(&n, current_env, alloc);
+                result -= temp_res.number;
+            },
+            NodeType.symbol => {
+                //Look at it and map the parent maps
+            },
+            NodeType.specialFormType => {
+                return EvalError.ThisNeedsToBeInsideParenthesis;
+            },
+        }
+    }
+    return result;
+}
+
+fn multiply(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem.Allocator) !i64 {
+    var result: i64 = undefined;
+    var is_result_undefined = true;
+    for (args.*) |n| {
+        switch (n.type) {
+            NodeType.number => {
+                if (is_result_undefined == true) {
+                    is_result_undefined = false;
+                    result = n.value.number;
+                } else {
+                    result = result * n.value.number;
+                }
+            },
+            NodeType.ListNode => {
+                const temp_res = try eval(&n, current_env, alloc);
+                if (is_result_undefined == true) {
+                    is_result_undefined = false;
+                    result = temp_res.number;
+                } else {
+                    result = result * temp_res.number;
+                }
+            },
+            NodeType.symbol => {
+                //Look at it and map the parent maps
+            },
+            NodeType.specialFormType => {
+                return EvalError.ThisNeedsToBeInsideParenthesis;
+            },
+        }
+    }
+    return result;
+}
+
+fn divide(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem.Allocator) !i64 {
+    var result: i64 = undefined;
+    var is_result_undefined = true;
+    for (args.*) |n| {
+        switch (n.type) {
+            NodeType.number => {
+                if (is_result_undefined == true) {
+                    is_result_undefined = false;
+                    result = n.value.number;
+                } else if (n.value.number != 0) {
+                    result = @divTrunc(result, n.value.number);
+                } else {
+                    return EvalError.DivisionByZero;
+                }
+            },
+            NodeType.ListNode => {
+                const temp_res = try eval(&n, current_env, alloc);
+                if (is_result_undefined == true) {
+                    is_result_undefined = false;
+                    result = temp_res.number;
+                } else if (temp_res.number != 0) {
+                    result = @divTrunc(result, temp_res.number);
+                } else {
+                    return EvalError.DivisionByZero;
+                }
+            },
+            NodeType.symbol => {
+                //Look at it and map the parent maps
+            },
+            NodeType.specialFormType => {
+                return EvalError.ThisNeedsToBeInsideParenthesis;
+            },
+        }
+    }
+    return result;
 }

@@ -1,20 +1,32 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
-// Although this function looks imperative, note that its job is to
-// declaratively construct a build graph that will be executed by an external
-// runner.
 pub fn build(b: *std.Build) void {
-    // Standard target options allows the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
+    // Standard target options
     const target = b.standardTargetOptions(.{});
-
-    // Standard optimization options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
-    // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    // Watch mode option
+    const enable_watch = b.option(
+        bool,
+        "watch",
+        "Enable watch mode for hot reloading",
+    ) orelse false;
+
+    // Watch configuration options
+    const watch_path = b.option(
+        []const u8,
+        "watch-path",
+        "Path to watch for changes",
+    ) orelse "src";
+
+    const watch_delay = b.option(
+        u32,
+        "watch-delay",
+        "Delay in ms between rebuilds",
+    ) orelse 1000;
+
+    // Create executable
     const exe = b.addExecutable(.{
         .name = "zig_interpreter",
         .root_source_file = b.path("src/main.zig"),
@@ -22,36 +34,47 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    // This declares intent for the executable to be installed into the
-    // standard location when the user invokes the "install" step (the default
-    // step when running `zig build`).
+    // Install artifact
     b.installArtifact(exe);
 
-    // This *creates* a Run step in the build graph, to be executed when another
-    // step is evaluated that depends on it. The next line below will establish
-    // such a dependency.
+    // Run command
     const run_cmd = b.addRunArtifact(exe);
-
-    // By making the run step depend on the install step, it will be run from the
-    // installation directory rather than directly from within the cache directory.
-    // This is not necessary, however, if the application depends on other installed
-    // files, this ensures they will be present and in the expected location.
     run_cmd.step.dependOn(b.getInstallStep());
 
-    // This allows the user to pass arguments to the application in the build
-    // command itself, like this: `zig build run -- arg1 arg2 etc`
+    // Pass arguments if any
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
 
-    // This creates a build step. It will be visible in the `zig build --help` menu,
-    // and can be selected like this: `zig build run`
-    // This will evaluate the `run` step rather than the default, which is "install".
+    // Run step
     const run_step = b.step("run", "Run the app");
     run_step.dependOn(&run_cmd.step);
 
-    // Creates a step for unit testing. This only builds the test executable
-    // but does not run it.
+    // Watch step
+    const watch_step = b.step("watch", "Watch for changes and rebuild");
+    if (enable_watch) {
+        var watch_args = std.ArrayList([]const u8).init(b.allocator);
+        watch_args.appendSlice(&[_][]const u8{
+            "zig",
+            "build",
+            "run",
+            "--watch-path",
+            watch_path,
+            "--watch-delay",
+        }) catch unreachable;
+
+        // Convert watch_delay to string
+        var delay_buf: [10]u8 = undefined;
+        const delay_str = std.fmt.bufPrint(&delay_buf, "{d}", .{watch_delay}) catch unreachable;
+        watch_args.append(delay_str) catch unreachable;
+
+        const watch_cmd = b.addSystemCommand(watch_args.items);
+        watch_step.dependOn(&watch_cmd.step);
+    } else {
+        watch_step.dependOn(&run_cmd.step);
+    }
+
+    // Test configuration
     const lib_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
@@ -68,9 +91,7 @@ pub fn build(b: *std.Build) void {
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
 
-    // Similar to creating the run step earlier, this exposes a `test` step to
-    // the `zig build --help` menu, providing a way for the user to request
-    // running the unit tests.
+    // Test step
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_lib_unit_tests.step);
     test_step.dependOn(&run_exe_unit_tests.step);
