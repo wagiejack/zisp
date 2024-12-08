@@ -2,7 +2,8 @@ const std = @import("std");
 
 //Defining the errors
 const ASTErrors = error{ NoParentNode, NoNodeInStack, NoPoppedNode, NoParentTokenFormed };
-const EvalError = error{ TypeMismatch, DivisionByZero, InvalidArguments, NoValueExistsForKeyInEnvironment, InvalidSymbolAtBeginningOfExpression, TestingError, ThisNeedsToBeInsideParenthesis };
+const EvalError = error{ TypeMismatch, DivisionByZero, InvalidArguments, NoValueExistsForKeyInEnvironment, InvalidSymbolAtBeginningOfExpression, TestingError, ThisNeedsToBeInsideParenthesis, KeyNotPresent, Processing_Error };
+const SpecialFormError = error{ InvalidArgumentsInDefineBlock, InvalidFirstArgumentInDefine, InvalidSecondArgumentInDefine, InvalidArgumentInBegin };
 
 //Tokenizer pre-requisites
 const TokenType = enum { leftParen, rightParen, Symbol, Number };
@@ -10,18 +11,32 @@ const Token = struct { type: TokenType, value: []const u8 };
 
 //Parser pre-requisites
 const specialFormType = enum {
-    Define, // Variables/functions
-    Lambda, // Function creation
-    If, // Basic conditionals
-    Quote, // Raw data
-    Begin, // Multiple expressions
+    Define,
+    Lambda,
+    If,
+    Quote,
+    Begin,
 };
 const NodeType = enum { number, symbol, ListNode, specialFormType };
 const Node = struct { type: NodeType, value: union { number: i64, symbol: []const u8, list: std.ArrayList(Node), specialForm: specialFormType } };
 const Parent_AST = struct { expressions: std.ArrayList(Node) };
 
 //Evaluator pre-requisites
+const Lambda = struct { params: []const []const u8, body: *const Node, env: *Environment };
+const Value = union(enum) { number: i64, boolean: bool, lambda: Lambda };
+const Environment = struct {
+    values: std.StringHashMap(Value),
+    parent: ?*Environment,
 
+    pub fn init(alloc: *const std.mem.Allocator, parent: ?*Environment) !Environment {
+        const env = Environment{ .values = std.StringHashMap(Value).init(alloc.*), .parent = parent };
+        return env;
+    }
+    pub fn deinit(self: *Environment) void {
+        self.values.deinit();
+    }
+};
+//Main function
 pub fn main() !void {
     const stdin = std.io.getStdIn();
     const stdout = std.io.getStdOut();
@@ -42,6 +57,10 @@ pub fn main() !void {
     //Central Node Storage for AST
     var AST = Parent_AST{ .expressions = std.ArrayList(Node).init(gpa_allocator) };
     defer AST.expressions.deinit();
+
+    //Central environment
+    var god_environment = try Environment.init(&arena_allocator, null);
+    defer god_environment.deinit();
 
     //io ops
     var buffer: [1024]u8 = undefined;
@@ -68,11 +87,13 @@ pub fn main() !void {
                 // <---------------------Uncomment this to print and see all the token that are being generated--------------->
                 // print_tokens(&tokens);
                 // <---------------------------------------------------------------------------------------------------------->
-
                 //Main Evaluation
-                for (AST.expressions.items) |ast| {
-                    const result = try eval(&ast, null, &gpa_allocator);
-                    std.debug.print("Result : {any}\n", .{result.number});
+                while (AST.expressions.items.len > 0) {
+                    const result = try eval(&AST.expressions.items[0], &god_environment, &gpa_allocator);
+                    std.debug.print("Result: ", .{});
+                    print_value(result);
+                    std.debug.print("\n", .{});
+                    _ = AST.expressions.orderedRemove(0);
                 }
 
                 // <---------------------Uncomment this to print and see AST structure that is generated---------------------->
@@ -89,6 +110,16 @@ pub fn main() !void {
     }
 }
 // <------------------------------------------------MAIN HELPER FUNCTIONS---------------------------------------------->
+fn print_value(value: Value) void {
+    switch (value) {
+        .number => |n| std.debug.print("{}", .{n}),
+        .boolean => |b| std.debug.print("{}", .{b}),
+        .lambda => {
+            std.debug.print("<lambda with {} params>", .{value.lambda.params.len});
+        },
+    }
+}
+
 fn isNumber(c: u8) bool {
     if (c >= '0' and c <= '9') {
         return true;
@@ -302,8 +333,6 @@ fn is_following_a_number(s: []u8) bool {
 //<---------------------------------------------------------------------------------------------------------------------
 
 //AST
-
-//Creating a stack struct for storing recursive levels of nodes
 const Node_stack = struct {
     nodes: std.ArrayList(Node),
     pub fn init(alloc: std.mem.Allocator) Node_stack {
@@ -354,7 +383,7 @@ fn create_and_allocate_to_AST(tokens: *const std.ArrayList(Token), AST: *std.Arr
     }
 }
 
-//AST HELPER FUNCTIONS
+//<------------------------------------------AST HELPER FUNCTIONS------------------------------------------>
 fn categorize_and_allocate(token: *const Token, parent_node: ?*Node, arena_alloc: std.mem.Allocator) !?*Node {
     switch (token.type) {
         TokenType.leftParen => {
@@ -398,34 +427,9 @@ fn categorize_and_allocate(token: *const Token, parent_node: ?*Node, arena_alloc
     return null;
 }
 
-// Evaluator
-
-//Bring this to evaluator pre-requisites later
-const Value = union(enum) {
-    number: i64,
-    function: *const fn ([]const Value) EvalError!Value,
-};
-const Environment = struct {
-    values: std.StringHashMap(Value),
-    parent: ?*Environment,
-
-    pub fn init(alloc: *const std.mem.Allocator, parent: ?*Environment) !Environment {
-        var env = Environment{
-            .values = std.StringHashMap(Value).init(alloc.*),
-            .parent = parent,
-        };
-
-        if (parent) |p| {
-            var iter = p.values.iterator();
-            while (iter.next()) |entry| {
-                try env.values.put(entry.key_ptr.*, entry.value_ptr.*);
-            }
-        }
-        return env;
-    }
-};
-
-fn eval(node: *const Node, parent_env: ?*Environment, alloc: *const std.mem.Allocator) anyerror!Value {
+//<---------------------------------------------------------------------------------------------------------->
+//Evaluator helper functions
+fn eval(node: *const Node, parent_env: *Environment, alloc: *const std.mem.Allocator) anyerror!Value {
     switch (node.type) {
         NodeType.ListNode => {
             const len = node.value.list.items.len;
@@ -435,12 +439,82 @@ fn eval(node: *const Node, parent_env: ?*Environment, alloc: *const std.mem.Allo
             const args = expression[1..];
             var new_env = try Environment.init(alloc, parent_env);
             switch (operator.type) {
-                NodeType.ListNode, NodeType.number => {
-                    return EvalError.InvalidSymbolAtBeginningOfExpression;
+                NodeType.specialFormType => {
+                    const op = operator.value.specialForm;
+                    switch (op) {
+                        specialFormType.Define => {
+                            const rest_of_length: usize = args[1..].len;
+                            if (rest_of_length > 2) {
+                                return SpecialFormError.InvalidArgumentsInDefineBlock;
+                            } else {
+                                if (args[0].type != NodeType.symbol) {
+                                    return SpecialFormError.InvalidFirstArgumentInDefine;
+                                }
+                                const value = try eval(&args[1], &new_env, alloc);
+                                try parent_env.values.put(args[0].value.symbol, value);
+                                return value;
+                            }
+                        },
+                        specialFormType.Lambda => {
+                            if (args[0].type != NodeType.ListNode or (args.len != 2)) {
+                                return EvalError.InvalidArguments;
+                            }
+                            var params_arr = std.ArrayList([]const u8).init(alloc.*);
+                            defer params_arr.deinit();
+                            const param_list = args[0].value.list.items[1 .. args[0].value.list.items.len - 1];
+                            for (param_list) |arg| {
+                                if (arg.type != NodeType.symbol) {
+                                    return EvalError.InvalidArguments;
+                                }
+                                try params_arr.append(arg.value.symbol);
+                            }
+                            const final_params = try params_arr.toOwnedSlice();
+                            const local_lambda = Lambda{
+                                .body = &args[1],
+                                .env = &new_env,
+                                .params = final_params,
+                            };
+                            return Value{ .lambda = local_lambda };
+                        },
+                        specialFormType.If => {
+                            if (args.len != 3) {
+                                return EvalError.InvalidArguments;
+                            }
+                            const comparison_result = try eval(&args[0], parent_env, alloc);
+                            if (comparison_result.boolean == true) {
+                                const truth_case = try eval(&args[1], parent_env, alloc);
+                                return truth_case;
+                            } else {
+                                const false_case = try eval(&args[2], parent_env, alloc);
+                                return false_case;
+                            }
+                        },
+                        specialFormType.Quote => {
+                            if (args.len != 1) {
+                                return EvalError.InvalidArguments;
+                            }
+                            return eval(&args[0], parent_env, alloc);
+                        },
+                        specialFormType.Begin => {
+                            if (args.len < 1) {
+                                return EvalError.InvalidArguments;
+                            }
+                            var result: Value = undefined;
+                            for (args) |a| {
+                                if (a.type != NodeType.ListNode) {
+                                    return SpecialFormError.InvalidArgumentInBegin;
+                                }
+                                result = try eval(&a, parent_env, alloc);
+                            }
+                            return result;
+                        },
+                    }
                 },
-                NodeType.specialFormType => {},
                 NodeType.symbol => {
                     const op = operator.value.symbol;
+                    if (std.mem.eql(u8, op, ">=") or std.mem.eql(u8, op, "<=")) {
+                        return Value{ .boolean = try cmp(&args, &new_env, alloc, op) };
+                    }
                     switch (op[0]) {
                         '+' => {
                             return Value{ .number = try add(&args, &new_env, alloc) };
@@ -454,32 +528,72 @@ fn eval(node: *const Node, parent_env: ?*Environment, alloc: *const std.mem.Allo
                         '/' => {
                             return Value{ .number = try divide(&args, &new_env, alloc) };
                         },
+                        '>' => {
+                            return Value{ .boolean = try cmp(&args, &new_env, alloc, &[_]u8{op[0]}) };
+                        },
+                        '<' => {
+                            return Value{ .boolean = try cmp(&args, &new_env, alloc, &[_]u8{op[0]}) };
+                        },
                         else => {
+                            if (parent_env.*.values.get(op)) |fn_result| {
+                                if (fn_result == .lambda) {
+                                    var lambda_env = try Environment.init(alloc, fn_result.lambda.env);
+                                    defer lambda_env.deinit();
+
+                                    if (args.len != fn_result.lambda.params.len) {
+                                        return EvalError.InvalidArguments;
+                                    }
+
+                                    for (fn_result.lambda.params, args) |param, arg| {
+                                        const arg_value = try eval(&arg, parent_env, alloc);
+                                        try lambda_env.values.put(param, arg_value);
+                                    }
+
+                                    return eval(fn_result.lambda.body, &lambda_env, alloc);
+                                }
+                            }
                             return EvalError.InvalidSymbolAtBeginningOfExpression;
                         },
                     }
+                },
+                NodeType.ListNode => {
+                    const fn_result = try eval(&operator, parent_env, alloc);
+                    if (fn_result == .lambda) {
+                        var lambda_env = try Environment.init(alloc, fn_result.lambda.env);
+                        defer lambda_env.deinit();
+
+                        if (args.len != fn_result.lambda.params.len) {
+                            return EvalError.InvalidArguments;
+                        }
+
+                        for (fn_result.lambda.params, args) |param, arg| {
+                            const arg_value = try eval(&arg, parent_env, alloc);
+                            try lambda_env.values.put(param, arg_value);
+                        }
+
+                        return eval(fn_result.lambda.body, &lambda_env, alloc);
+                    }
+                    return EvalError.InvalidSymbolAtBeginningOfExpression;
+                },
+                NodeType.number => {
+                    return EvalError.InvalidSymbolAtBeginningOfExpression;
                 },
             }
         },
         NodeType.number => {
             return Value{ .number = node.value.number };
         },
-        // NodeType.symbol => {
-        //     return Value{};
-        // },
-        // NodeType.specialFormType => {
-        //     return Value{};
-        // },
+        NodeType.symbol => {
+            const val = try search_parent_envs_for_value(node.value.symbol, parent_env);
+            return val;
+        },
         else => {
-            return EvalError.TestingError;
+            return EvalError.Processing_Error;
         },
     }
-    return EvalError.DivisionByZero;
+    return EvalError.Processing_Error;
 }
-
-//const NodeType = enum { number, symbol, ListNode, specialFormType };
-// const Node = struct { type: NodeType, value: union { number: i64, symbol: []const u8, list: std.ArrayList(Node), specialForm: specialFormType } };
-fn add(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem.Allocator) !i64 {
+fn add(args: *const []Node, current_env: *Environment, alloc: *const std.mem.Allocator) !i64 {
     var result: i64 = 0;
     for (args.*) |n| {
         switch (n.type) {
@@ -491,7 +605,8 @@ fn add(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem.Al
                 result += temp_res.number;
             },
             NodeType.symbol => {
-                //Look at it in the map and parent maps
+                const val = try search_parent_envs_for_value(n.value.symbol, current_env);
+                result += val.number;
             },
             NodeType.specialFormType => {
                 return EvalError.ThisNeedsToBeInsideParenthesis;
@@ -501,7 +616,7 @@ fn add(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem.Al
     return result;
 }
 
-fn sub(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem.Allocator) !i64 {
+fn sub(args: *const []Node, current_env: *Environment, alloc: *const std.mem.Allocator) !i64 {
     var result: i64 = 0;
     for (args.*) |n| {
         switch (n.type) {
@@ -513,7 +628,8 @@ fn sub(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem.Al
                 result -= temp_res.number;
             },
             NodeType.symbol => {
-                //Look at it and map the parent maps
+                const val = try search_parent_envs_for_value(n.value.symbol, current_env);
+                result -= val.number;
             },
             NodeType.specialFormType => {
                 return EvalError.ThisNeedsToBeInsideParenthesis;
@@ -523,7 +639,7 @@ fn sub(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem.Al
     return result;
 }
 
-fn multiply(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem.Allocator) !i64 {
+fn multiply(args: *const []Node, current_env: *Environment, alloc: *const std.mem.Allocator) !i64 {
     var result: i64 = undefined;
     var is_result_undefined = true;
     for (args.*) |n| {
@@ -546,7 +662,13 @@ fn multiply(args: *const []Node, current_env: ?*Environment, alloc: *const std.m
                 }
             },
             NodeType.symbol => {
-                //Look at it and map the parent maps
+                const temp_res = try search_parent_envs_for_value(n.value.symbol, current_env);
+                if (is_result_undefined == true) {
+                    is_result_undefined = false;
+                    result = temp_res.number;
+                } else {
+                    result = result * temp_res.number;
+                }
             },
             NodeType.specialFormType => {
                 return EvalError.ThisNeedsToBeInsideParenthesis;
@@ -556,7 +678,7 @@ fn multiply(args: *const []Node, current_env: ?*Environment, alloc: *const std.m
     return result;
 }
 
-fn divide(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem.Allocator) !i64 {
+fn divide(args: *const []Node, current_env: *Environment, alloc: *const std.mem.Allocator) !i64 {
     var result: i64 = undefined;
     var is_result_undefined = true;
     for (args.*) |n| {
@@ -583,7 +705,15 @@ fn divide(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem
                 }
             },
             NodeType.symbol => {
-                //Look at it and map the parent maps
+                const temp_res = try search_parent_envs_for_value(n.value.symbol, current_env);
+                if (is_result_undefined == true) {
+                    is_result_undefined = false;
+                    result = temp_res.number;
+                } else if (temp_res.number != 0) {
+                    result = @divTrunc(result, temp_res.number);
+                } else {
+                    return EvalError.DivisionByZero;
+                }
             },
             NodeType.specialFormType => {
                 return EvalError.ThisNeedsToBeInsideParenthesis;
@@ -591,4 +721,37 @@ fn divide(args: *const []Node, current_env: ?*Environment, alloc: *const std.mem
         }
     }
     return result;
+}
+
+fn cmp(args: *const []Node, current_env: *Environment, alloc: *const std.mem.Allocator, sign: []const u8) !bool {
+    const first_value = try eval(&args.*[0], current_env, alloc);
+    const second_value = try eval(&args.*[1], current_env, alloc);
+    if (std.mem.eql(u8, sign, "<=")) {
+        return first_value.number <= second_value.number;
+    } else if (std.mem.eql(u8, sign, ">=")) {
+        return first_value.number >= second_value.number;
+    } else if (std.mem.eql(u8, sign, ">")) {
+        return first_value.number > second_value.number;
+    } else if (std.mem.eql(u8, sign, "<")) {
+        return first_value.number < second_value.number;
+    }
+    return false;
+}
+
+fn map(key: []const u8, value: i64, env: *Environment) !void {
+    try env.values.put(key, Value{ .number = value });
+}
+
+fn search_parent_envs_for_value(key: []const u8, env: *Environment) !Value {
+    while (true) {
+        if (env.values.get(key)) |v| {
+            return v;
+        } else if (env.parent) |parent| {
+            // Pass the parent environment directly
+            return try search_parent_envs_for_value(key, parent);
+        } else {
+            break;
+        }
+    }
+    return EvalError.KeyNotPresent;
 }
