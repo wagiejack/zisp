@@ -96,5 +96,5 @@ Result: 20
 To run Zisp, simply use:
 
 ```bash
-zig build run
+zig run main.zig
 ```
